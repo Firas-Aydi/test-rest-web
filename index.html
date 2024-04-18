@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Map des Restaurants</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <style>
+      #map {
+        height: 600px;
+      }
+      .menu-content {
+        height: 400px;
+        width: 300px;
+        /* overflow: auto; */
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <script>
+      var map = L.map("map").setView([39.9884019, -75.102826], 4);
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      }).addTo(map);
+
+      var restaurants = JSON.parse(`{{ restaurants|tojson|safe }}`);
+
+      // Function to generate unique IDs
+      function generateUniqueId() {
+        return Date.now().toString(36) + Math.random().toString(36).substr(2);
+      }
+
+      async function createPopupContent(restaurant) {
+        // Utilisation de l'identifiant unique pour créer un bouton de menu
+        const uniqueId = generateUniqueId(); // Génère un nouvel identifiant unique pour chaque bouton
+        var popupContent = `<button id="${uniqueId}">Menu</button><br>`;
+        // popupContent += `<button onclick="showMenu('${encodeURIComponent(JSON.stringify(restaurant))}')">Menu</button>`;
+
+        // Ajoutez un gestionnaire d'événements pour le clic sur le bouton
+        document.addEventListener("click", function (event) {
+          if (event.target && event.target.id === uniqueId) {
+            // showMenu(restaurant);
+            showMenu(`${encodeURIComponent(JSON.stringify(restaurant))}`);
+          }
+        });
+        popupContent += `<b>${restaurant.restaurantName}</b><br>
+            ${restaurant.address}, ${restaurant.city}, ${restaurant.state} ${restaurant.postalCode}<br>
+            Stars: ${restaurant.stars}<br>`;
+
+        var TerribleReviews = 0;
+        var PoorReviews = 0;
+        var AverageReviews = 0;
+        var GoodReviews = 0;
+        var ExcellentReviews = 0;
+
+        if (restaurant.reviews && Array.isArray(restaurant.reviews)) {
+          for (const review of restaurant.reviews) {
+            // console.log("restaurant : ",restaurant)
+            // console.log("review : ",review.text)
+            try {
+              const response = await fetch("/predict_sentiment", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ text: review.text }),
+              });
+              const data = await response.json();
+              // console.log("data : ",data)
+              switch (data.sentiment) {
+                case "Terrible":
+                  TerribleReviews++;
+                  break;
+                case "Poor":
+                  PoorReviews++;
+                  break;
+                case "Average":
+                  AverageReviews++;
+                  break;
+                case "Very good":
+                  GoodReviews++;
+                  break;
+                case "Excellent":
+                  ExcellentReviews++;
+                  break;
+              }
+            } catch (error) {
+              console.error("Error fetching sentiment:", error);
+            }
+          }
+
+          popupContent += `<div style='color:green;'><b>Excellent reviews: ${ExcellentReviews}</b></div>`;
+          popupContent += `<div style='color:blue;'><b>Very good reviews: ${GoodReviews}</b></div>`;
+          popupContent += `<div style='color:yellow;'><b>Average reviews: ${AverageReviews}</b></div>`;
+          popupContent += `<div style='color:orange;'><b>Poor reviews: ${PoorReviews}</b></div>`;
+          popupContent += `<div style='color:red;'><b>Terrible reviews: ${TerribleReviews}</b></div>`;
+          popupContent += `<br><b>Reviews:</b><br>`;
+
+          // if (restaurant.reviews && Array.isArray(restaurant.reviews)) {
+          for (const review of restaurant.reviews) {
+            var truncatedText =
+              review.text.length > 100
+                ? review.text.substring(0, 100) + "..."
+                : review.text;
+            popupContent += truncatedText + "<br><br>";
+          }
+          // }
+          return popupContent;
+        }
+      }
+
+      function showMenu(rest) {
+        restaurant = JSON.parse(decodeURIComponent(rest));
+        // console.log("Afficher le restaurant :", restaurant);
+        // Assume fetch method is properly implemented
+        fetch("/get_menu", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(restaurant),
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            const restaurant_menus = data.restaurant_menus;
+            if (restaurant_menus && restaurant_menus.length > 0) {
+              const menu = restaurant_menus[0]; // Sélectionner le premier menu récupéré
+              const uniqueId = generateUniqueId(); // Générer un identifiant unique pour le bouton
+              // Construction du contenu du menu
+              var menuContent = `<div class="menu-content"><button id="${uniqueId}">Reviews</button><br>
+              <b>Menu for ${restaurant.restaurantName}</b><br>`;
+
+              // Ajouter les détails de chaque plat du menu
+              menu.plats.forEach((plat, index) => {
+                menuContent += `<div><p>Plat ${index + 1}</p>`;
+                menuContent += `<p>Name: ${plat.name}</p>`;
+                menuContent += `<p>Price: ${plat.price}</p>`;
+                menuContent += `<img src="${plat.image}" alt="${plat.name}" style="max-width: 100px; max-height: 100px;">`;
+                menuContent += `</div>`;
+              });
+
+              // Fermeture de la balise div
+              menuContent += `</div>`;
+              // Ajoutez un gestionnaire d'événements pour le clic sur le bouton
+              document.addEventListener("click", function (event) {
+                if (event.target && event.target.id === uniqueId) {
+                  // showMenu(restaurant);
+                  showReviews(
+                    `${encodeURIComponent(JSON.stringify(restaurant))}`
+                  );
+                }
+              });
+              // Mettre à jour le contenu de la popup
+              map.eachLayer(function (layer) {
+                if (
+                  layer instanceof L.Marker &&
+                  layer
+                    .getLatLng()
+                    .equals([restaurant.latitude, restaurant.longitude])
+                ) {
+                  layer.getPopup().setContent(menuContent);
+                }
+              });
+              console.log(
+                "Afficher le menu pour le restaurant'",
+                restaurant.restaurantName,
+                "': ",
+                menu
+              );
+              return menuContent;
+            } else {
+              // console.error("No menu found for this restaurant");
+              const uniqueId = generateUniqueId(); // Générer un identifiant unique pour le bouton
+              // Construction du contenu du menu
+              var menuContent = `<div class="menu-content"><button id="${uniqueId}">Reviews</button><br>
+              <b>Nous sommes désolés, mais aucun menu n'est actuellement disponible pour ce restaurant. Veuillez vérifier à nouveau ultérieurement ou contactez-nous pour plus d'informations</b><br>`;
+              // Ajoutez un gestionnaire d'événements pour le clic sur le bouton
+              document.addEventListener("click", function (event) {
+                if (event.target && event.target.id === uniqueId) {
+                  showReviews(
+                    `${encodeURIComponent(JSON.stringify(restaurant))}`
+                  );
+                }
+              });
+              // Mettre à jour le contenu de la popup
+              map.eachLayer(function (layer) {
+                if (
+                  layer instanceof L.Marker &&
+                  layer
+                    .getLatLng()
+                    .equals([restaurant.latitude, restaurant.longitude])
+                ) {
+                  layer.getPopup().setContent(menuContent);
+                }
+              });
+              console.log("aucun menu n'est actuellement disponible pour ce restaurant.");
+              return menuContent;
+            }
+          })
+          .catch((error) => {
+            console.error("Error fetching menu:", error);
+          });
+      }
+
+      // Function to handle showing reviews
+      function showReviews(rest) {
+        const restaurant = JSON.parse(decodeURIComponent(rest));
+        // console.log("Restaurant :", restaurant);
+        console.log(
+          "Afficher les avis pour le restaurant :",
+          restaurant.restaurantName
+        );
+
+        // Mettre à jour le contenu de la popup avec les avis
+        map.eachLayer(function (layer) {
+          if (
+            layer instanceof L.Marker &&
+            layer
+              .getLatLng()
+              .equals([restaurant.latitude, restaurant.longitude])
+          ) {
+            createPopupContent(restaurant)
+              .then(function (popupContent) {
+                layer.getPopup().setContent(popupContent);
+              })
+              .catch(function (error) {
+                console.error(
+                  "Une erreur s'est produite lors de l'affichage des avis :",
+                  error
+                );
+              });
+          }
+        });
+      }
+
+      window.onload = function () {
+        for (const restaurant of restaurants) {
+          createPopupContent(restaurant)
+            .then((popupContent) => {
+              var popupOptions = {
+                maxHeight: "300",
+              };
+
+              L.marker([restaurant.latitude, restaurant.longitude])
+                .addTo(map)
+                .bindPopup(popupContent, popupOptions);
+            })
+            .catch((error) => {
+              console.error(
+                "Une erreur s'est produite lors de la création de la popup :",
+                error
+              );
+            });
+        }
+      };
+    </script>
+  </body>
+</html>
